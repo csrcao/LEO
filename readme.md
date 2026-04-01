@@ -1,7 +1,7 @@
 # LEO
 This is the official code of paper "Learning Only What Matters Most: Efficient Cross-Modal Attention Training". The complete version of our paper is presented in:
 ```bash
-Leo_complete_version.pdf
+LEO_complete_version.pdf
 ```
 
 
