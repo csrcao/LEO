@@ -12,3 +12,11 @@ To run an example:
 ```bash
 python TimeMMD/run_longExp.py 
 ```
+
+We use the TimeMMD archive, refers to https://github.com/AdityaLab/Time-MMD
+One dataset Health is provided for running an example.
+
+Put data in dir:
+```bash
+TimeMMD/dataset
+```
