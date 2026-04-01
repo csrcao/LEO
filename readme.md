@@ -1,5 +1,5 @@
 # LEO
-This is the offical code of paper "Learning Only What Matters Most: Efficient Cross-Modal Attention Training".
+This is the official code of paper "Learning Only What Matters Most: Efficient Cross-Modal Attention Training".
 
 ## Setup
 install requirement:
