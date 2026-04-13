@@ -24,3 +24,18 @@ Put data in dir:
 ```bash
 TimeMMD/dataset
 ```
+
+## For other models
+If you would like to use LEO to train your own models, use codes in following files to replace the vanilla attention codes:
+```bash
+TimeMMD/aurora/sparse_attention.py
+TimeMMD/aurora/OurTransformer.py
+TimeMMD/aurora/CrossAttnBudget.py
+TimeMMD/aurora/QueryBudgetController.py
+```
+
+
+
+
+
+
