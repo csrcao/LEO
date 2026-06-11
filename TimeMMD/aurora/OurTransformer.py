@@ -29,7 +29,7 @@ class SampleAttention(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
         self.budget = AdaptiveBudgetController(ratio_init=0.105)
-        self.cross_attn = TopRowSparseAttention(index_type='hnsw', budget_ctrl=self.budget,
+        self.cross_attn = TopRowSparseAttention(index_type='IVFFlat', budget_ctrl=self.budget,
                                                 query_filter=True, dropout=dropout, output_attention=False)
 
     def forward(self, x, y, prune_ratio=None):
@@ -84,7 +84,7 @@ class SimpleCrossTransformerEncoderLayer(nn.Module):
         nhead: int,
         dim_feedforward: int,
         dropout: float = 0.1,
-        init_ratio: float = 0.1,
+        init_ratio: float = 0.4,
         prune_q: bool = True,
         warmup_steps: int = 30,
     ):

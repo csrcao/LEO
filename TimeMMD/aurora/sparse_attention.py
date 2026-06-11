@@ -8,69 +8,116 @@ import faiss
 import faiss.contrib.torch_utils
 from .QueryBudgetController import AdaptiveBudgetController
 import math
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 @torch.no_grad()
-def build_faiss_index(col_feat, index='IVFFlat', step=6):
+def build_faiss_index(col_feat, index_type='IVFFlat', step=6):
     """
-    col_feat: [N, K]
+    col_feat: [N, K] CUDA tensor
     """
+    if not col_feat.is_cuda:
+        col_feat = col_feat.cuda()
+
     col_feat, _ = torch.sort(col_feat, dim=1, descending=True)
-    idx = np.linspace(0, col_feat.shape[1] - 1, num=step, dtype=int)
-    col_np = col_feat.detach().cpu().numpy().astype(np.float16)[:, idx]
-    col_np = np.ascontiguousarray(col_np)
-    dim = col_np.shape[1]
-    N = col_np.shape[0]
+    idx = torch.linspace(0, col_feat.shape[1] - 1, steps=step, device=col_feat.device).long()
+    col_feat = col_feat[:, idx].contiguous()
 
-    if index == 'l2':
-        res = faiss.StandardGpuResources()
-        res.setTempMemory(1 << 30)
-        opts = faiss.GpuClonerOptions()
-        opts.useFloat16 = True
-        cpu_index = faiss.IndexFlatL2(dim)
-        index = faiss.index_cpu_to_gpu(res, 0, cpu_index, opts)
-    elif index == 'IVFFlat':  # IVFFlat
-        res = faiss.StandardGpuResources()
-        res.setTempMemory(1 << 30)
-        opts = faiss.GpuClonerOptions()
-        opts.useFloat16 = True
-        nlist = max(1, N // 40)
-        quantizer = faiss.IndexFlatL2(dim)
-        cpu_index = faiss.IndexIVFFlat(quantizer, dim, nlist)
-        cpu_index.train(col_np)
-        cpu_index.add(col_np)
-        index = faiss.index_cpu_to_gpu(res, 0, cpu_index, opts)
-    else:
+    col_feat = F.normalize(col_feat, p=2, dim=1).contiguous()
+
+    col_feat = col_feat.float()
+    dim = col_feat.shape[1]
+    N = col_feat.shape[0]
+    res = faiss.StandardGpuResources()
+    res.setTempMemory(1 << 30)
+
+    if index_type == 'l2':
+        config = faiss.GpuIndexFlatConfig()
+        config.device = 0
+        config.useFloat16 = True
+        config.use_cuvs = True
+        gpu_index = faiss.GpuIndexFlatL2(res, dim, config)
+        gpu_index.add(col_feat)
+
+    elif index_type == 'IVFFlat':
+        nlist = min(4096, max(32, int(np.sqrt(N))))
+        ivf_config = faiss.GpuIndexIVFFlatConfig()
+        ivf_config.device = 0
+        ivf_config.useFloat16 = True
+        ivf_config.use_cuvs = True
+        gpu_index = faiss.GpuIndexIVFFlat(res, dim, nlist, faiss.METRIC_INNER_PRODUCT, ivf_config) # faiss.METRIC_L2, faiss.METRIC_INNER_PRODUCT
+        gpu_index.train(col_feat)
+        gpu_index.add(col_feat)
+        gpu_index.nprobe = 4
+
+    elif index_type == 'IVFPQ':
+        nlist = min(4096, max(32, int(np.sqrt(N))))
+        m = min(8, dim)
+        while dim % m != 0:
+            m -= 1
+        bits = 8
+        ivfpq_config = faiss.GpuIndexIVFPQConfig()
+        ivfpq_config.device = 0
+        ivfpq_config.useFloat16 = True
+        ivfpq_config.use_cuvs = True
+        gpu_index = faiss.GpuIndexIVFPQ(res, dim, nlist, m, bits, faiss.METRIC_L2, ivfpq_config)
+        gpu_index.train(col_feat)
+        gpu_index.add(col_feat)
+        gpu_index.nprobe = 4
+
+    elif index_type == 'CAGRA':
+        col_feat = col_feat.contiguous().float()
+        cagra_config = faiss.GpuIndexCagraConfig()
+        cagra_config.device = 0
+        gpu_index = faiss.GpuIndexCagra(res, dim, faiss.METRIC_L2, cagra_config)
+        gpu_index.train(col_feat)
+        gpu_index.add(col_feat)
+
+    else:  # HNSW
+        col_np = col_feat.cpu().numpy().astype(np.float32)
+        col_np = np.ascontiguousarray(col_np)
         M = 8
-        index = faiss.IndexHNSWFlat(dim, M)  # L2
-        index.hnsw.efSearch = 16
-        index.hnsw.efConstruction = 40
-        index.add(col_np)
+        gpu_index = faiss.IndexHNSWFlat(dim, M)
+        gpu_index.hnsw.efSearch = 16
+        gpu_index.hnsw.efConstruction = 40
+        gpu_index.add(col_np)
 
-    return index
+    if index_type != 'HNSW':
+        gpu_index.referenced_objects = [res]
+
+    return gpu_index
 
 
 @torch.no_grad()
 def faiss_query(index, x, batch_size=2048, step=6):
     """
-    x: [Q, K]
+    x: [Q, K] CUDA tensor
     return: [Q, 1]
     """
     x = x.reshape(-1, x.shape[-1])
-    idx = np.linspace(0, x.shape[1] - 1, num=step, dtype=int)
-
+    idx = torch.linspace(0, x.shape[1] - 1, steps=step, device=x.device).long()
+    x = x[:, idx].contiguous()
+    x = x.float()
     all_I = []
+    is_gpu_index = not isinstance(index, faiss.IndexHNSWFlat)
+
     for i in range(0, x.shape[0], batch_size):
         batch = x[i:i + batch_size]
-        batch_np = batch.detach().cpu().numpy().astype(np.float16)[:, idx]
-        batch_np = np.ascontiguousarray(batch_np)
-        _, I = index.search(batch_np, 1)
+        if is_gpu_index:
+            _, I = index.search(batch, 1)
+        else:
+            batch_np = (batch.cpu().numpy().astype(np.float32))
+            batch_np = np.ascontiguousarray(batch_np)
+            _, I = index.search(batch_np, 1)
         all_I.append(I)
 
-    I = np.vstack(all_I)
-    I = np.asarray(I, dtype=np.int64)
-
-    return torch.tensor(I, dtype=torch.long, device=x.device)
+    if is_gpu_index:
+        I = torch.cat(all_I, dim=0)
+        return I.long().to(x.device)
+    else:
+        I = np.vstack(all_I)
+        return torch.tensor(I, dtype=torch.long, device=x.device)
 
 
 def AV_matmul(att_pre_nor, att_1_nor, att_2_nor, K_indices, K2_indices, V):
