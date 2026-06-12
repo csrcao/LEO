@@ -1,7 +1,7 @@
 # LEO
-This is the official code of paper "Learning Only What Matters Most: Efficient Cross-Modal Attention Training". The complete version of our paper is presented in:
+This is the official code of paper "Efficient Cross-modal Attention Learning for Multimodal Time Series Forecasting". The complete version of our paper is presented in:
 ```bash
-LEO_complete.pdf
+ICDE2027_LEO.pdf
 ```
 
 
