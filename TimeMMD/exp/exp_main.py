@@ -8,25 +8,88 @@ import torch.nn as nn
 from data_provider.data_factory import data_provider
 from einops import rearrange
 from exp.exp_basic import Exp_Basic
+#from models import Informer, Autoformer, Transformer, DLinear, Linear, NLinear, PatchTST
 from torch import optim
 from utils.metrics import metric
-from utils.tools import EarlyStopping, adjust_learning_rate, visual, test_params_flop
+from utils.tools import EarlyStopping, adjust_learning_rate, visual
 from aurora.modeling_aurora import AuroraForPrediction
 from aurora.configuration_aurora import AuroraConfig
+from aurora.modality_connector import ModalityConnector, TextEncoder, VisionEncoder
+import matplotlib.pyplot as plt
+import matplotlib
 
 warnings.filterwarnings('ignore')
 
+@torch.no_grad
+def draw_heatmap(module, epoch, i):
+    attn_t = module.text_attn
+    heatmap = attn_t[2, 2].detach().cpu().numpy()
+    fig, ax = plt.subplots(figsize=(8, 6))
+    cmap = matplotlib.colors.LinearSegmentedColormap.from_list(
+        "mycmap",
+        ["white", "red"]
+    )
+    cax = ax.matshow(
+        heatmap,
+        cmap=cmap
+    )
+    cb = fig.colorbar(cax)
+    ax.set_xlabel("Text Tokens")
+    ax.set_ylabel("TS Tokens")
+    ax.set_title(f"Epoch {epoch} Iter {i}")
+    plt.savefig(f"attnheatmap/attn_epoch{epoch}_iter{i}_text.pdf")
+    plt.close()
+    attn_v = module.vision_attn
+    heatmap = attn_v[2, 2].detach().cpu().numpy()
+    fig, ax = plt.subplots(figsize=(8, 6))
+    cmap = matplotlib.colors.LinearSegmentedColormap.from_list(
+        "mycmap",
+        ["white", "red"]
+    )
+    cax = ax.matshow(
+        heatmap,
+        cmap=cmap
+    )
+    cb = fig.colorbar(cax)
+    ax.set_xlabel("Vision Tokens")
+    ax.set_ylabel("TS Tokens")
+    ax.set_title(f"Epoch {epoch} Iter {i}")
+    plt.savefig(f"attnheatmap/attn_epoch{epoch}_iter{i}_vision.pdf")
 
 class Exp_Main(Exp_Basic):
     def __init__(self, args):
         super(Exp_Main, self).__init__(args)
+    '''
+    def _build_model(self):
+        model_path = self.args.model_path
+        model = AuroraForPrediction.from_pretrained(model_path)
+        for param in model.parameters():
+            param.requires_grad = False
+
+        # freeze the batch_norm layers
+        for name, module in model.named_modules():
+            if isinstance(module, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d,
+                                   torch.nn.BatchNorm3d)):
+                module.eval()
+                for param in module.parameters():
+                    param.requires_grad = False
+
+        for name, param in model.named_parameters():
+            if "flow_match" in name:
+                param.requires_grad = True
+        # for name, param in model.named_parameters():
+        #     print(f"{name}: requires_grad={param.requires_grad}")
+
+        if self.args.use_multi_gpu and self.args.use_gpu:
+            model = nn.DataParallel(model, device_ids=self.args.device_ids)
+        return model
+    '''
 
     def _build_model(self):
         model_path = self.args.model_path
         config_path = os.path.join(model_path, 'config.json')
         config = AuroraConfig.from_json_file(config_path)
         model = AuroraForPrediction._from_config(config)
-
         return model.cuda()
 
     def _get_data(self, flag):
@@ -46,6 +109,8 @@ class Exp_Main(Exp_Basic):
         self.model.eval()
         trues = []
         preds = []
+        input = []
+        sample = []
         with torch.no_grad():
             for i, (batch_x, batch_y, batch_input_ids, batch_attention_mask, batch_token_type_ids) in enumerate(
                     vali_loader):
@@ -54,6 +119,8 @@ class Exp_Main(Exp_Basic):
                 batch_input_ids = batch_input_ids.to(self.device)
                 batch_attention_mask = batch_attention_mask.to(self.device)
                 batch_token_type_ids = batch_token_type_ids.to(self.device)
+                #check_finite("x", batch_x)
+                #check_finite("y", batch_y)
                 finite_row = torch.isfinite(batch_y.view(batch_y.size(0), -1)).all(dim=1)  # [B]
                 if not finite_row.all():
                     batch_x = batch_x[finite_row]
@@ -77,18 +144,19 @@ class Exp_Main(Exp_Basic):
                                              max_output_length=self.args.pred_len, max_text_token_length=500,
                                              num_samples=10)
 
+                #check_finite("predy", pred_y)
                 samples = rearrange(pred_y, "(b c) s l -> s b l c", c=n_vars)
                 output = samples.mean(0)
 
                 preds.append(output.detach().cpu().numpy())
                 trues.append(batch_y.detach().cpu().numpy())
+                sample.append(samples.detach().cpu().numpy())
 
                 # print("---------")
                 # print(output.shape)
 
             preds = np.concatenate(preds, axis=0)
             trues = np.concatenate(trues, axis=0)
-
             mae, mse, rmse, mape, mspe, rse, corr = metric(preds, trues)
         self.model.train()
         return mse, mae
@@ -140,7 +208,7 @@ class Exp_Main(Exp_Basic):
                 batch_attention_mask = batch_attention_mask.repeat(n_vars, 1)
                 batch_token_type_ids = batch_token_type_ids.repeat(n_vars, 1)
 
-                # encoder - decoder
+
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         outputs = self.model(input_ids=batch_x, text_input_ids=batch_input_ids,
@@ -151,11 +219,13 @@ class Exp_Main(Exp_Basic):
                         loss = outputs.loss
                         train_loss.append(loss.item())
                 else:
+
                     outputs = self.model(input_ids=batch_x, text_input_ids=batch_input_ids,
                                          text_attention_mask=batch_attention_mask,
                                          text_token_type_ids=batch_token_type_ids,
                                          labels=batch_y,
                                          max_output_length=self.args.pred_len)
+
                     loss = outputs.loss
                     train_loss.append(loss.item())
 
@@ -167,7 +237,6 @@ class Exp_Main(Exp_Basic):
                     iter_count = 0
                     time_now = time.time()
 
-
                 if self.args.use_amp:
                     scaler.scale(loss).backward()
                     scaler.step(model_optim)
@@ -175,7 +244,6 @@ class Exp_Main(Exp_Basic):
                 else:
                     loss.backward()
                     model_optim.step()
-
 
             torch.cuda.synchronize()
             per_epoch_time = time.time() - epoch_time
@@ -194,6 +262,7 @@ class Exp_Main(Exp_Basic):
                 print("Early stopping")
                 break
 
+
             adjust_learning_rate(model_optim, None, epoch + 1, self.args)
 
         print('total train time:', total_time)
@@ -206,6 +275,8 @@ class Exp_Main(Exp_Basic):
 
         preds = []
         trues = []
+        input = []
+        sample = []
         self.model.eval()
         with (torch.no_grad()):
             for i, (batch_x, batch_y, batch_input_ids, batch_attention_mask, batch_token_type_ids) in enumerate(
@@ -227,6 +298,7 @@ class Exp_Main(Exp_Basic):
                         continue
 
                 n_vars = batch_x.shape[-1]
+                input.append(batch_x.detach().cpu().numpy())
                 batch_x = rearrange(batch_x, "b l c -> (b c) l")
                 batch_input_ids = batch_input_ids.repeat(n_vars, 1)
                 batch_attention_mask = batch_attention_mask.repeat(n_vars, 1)
@@ -243,6 +315,7 @@ class Exp_Main(Exp_Basic):
 
                 preds.append(output.detach().cpu().numpy())
                 trues.append(batch_y.detach().cpu().numpy())
+                sample.append(samples.detach().cpu().numpy())
 
                 # print("---------")
                 # print(output.shape)
@@ -253,3 +326,40 @@ class Exp_Main(Exp_Basic):
             mae, mse, rmse, mape, mspe, rse, corr = metric(preds, trues)
             print('mse:{}, mae:{}, rse:{}'.format(mse, mae, rse))
 
+        # return {"output": output}
+
+        #     f_dim = -1 if self.args.features == 'MS' else 0
+        #     # print(outputs.shape,batch_y.shape)
+        #     outputs = outputs[:, -self.args.pred_len:, f_dim:]
+        #     batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+        #     outputs = outputs.detach().cpu().numpy()
+        #     batch_y = batch_y.detach().cpu().numpy()
+        #
+        #     pred = outputs  # outputs.detach().cpu().numpy()  # .squeeze()
+        #     true = batch_y  # batch_y.detach().cpu().numpy()  # .squeeze()
+        #
+        #     preds.append(pred)
+        #     trues.append(true)
+        #
+        # preds = np.array(preds)
+        # trues = np.array(trues)
+        #
+        # preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
+        # trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
+        # inputx = inputx.reshape(-1, inputx.shape[-2], inputx.shape[-1])
+        #
+        # # result save
+        # folder_path = './results/' + setting + '/'
+        # if not os.path.exists(folder_path):
+        #     os.makedirs(folder_path)
+        #
+        # mae, mse, rmse, mape, mspe, rse, corr = metric(preds, trues)
+        # print('mse:{}, mae:{}, rse:{}'.format(mse, mae, rse))
+        # f = open("result.txt", 'a')
+        # f.write(setting + "  \n")
+        # f.write('mse:{}, mae:{}, rse:{}'.format(mse, mae, rse))
+        # f.write('\n')
+        # f.write('\n')
+        # f.close()
+        #
+        # return
