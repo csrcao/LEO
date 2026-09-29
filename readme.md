@@ -4,6 +4,21 @@ This is the official code of paper "LEO: Efficient Cross-Modal Attention Trainin
 LEO_2027.pdf
 ```
 
+## Overview
+
+<p align="center">
+  <a href="./overview-leo.png">
+    <img src="./overview-leo.png" width="850" alt="Overview of LEO">
+  </a>
+</p>
+
+## Result preview
+
+<p align="center">
+  <a href="./result.png">
+    <img src="./result.png" width="850" alt="Result of LEO">
+  </a>
+</p>
 
 ## Setup
 install requirement:
