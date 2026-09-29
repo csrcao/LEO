@@ -1,7 +1,7 @@
 # LEO
-This is the official code of paper "Efficient Cross-modal Attention Learning for Multimodal Time Series Forecasting". The complete version of our paper is presented in:
+This is the official code of paper "LEO: Efficient Cross-Modal Attention Training for Time Series Forecasting". The complete version of our paper is presented in:
 ```bash
-ICDE2027_LEO.pdf
+LEO_2027.pdf
 ```
 
 
