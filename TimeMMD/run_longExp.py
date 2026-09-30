@@ -61,7 +61,7 @@ parser.add_argument('--do_predict', action='store_true', help='whether to predic
 # optimization
 parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
 parser.add_argument('--itr', type=int, default=2, help='experiments times')
-parser.add_argument('--train_epochs', type=int, default=20, help='train epochs')
+parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
 parser.add_argument('--batch_size', type=int, default=16, help='batch size of train input data')
 parser.add_argument('--patience', type=int, default=20, help='early stopping patience')
 parser.add_argument('--learning_rate', type=float, default=0.0001, help='optimizer learning rate')
@@ -78,6 +78,16 @@ parser.add_argument('--gpu', type=int, default=0, help='gpu')
 parser.add_argument('--use_multi_gpu', action='store_true', help='use multiple gpus', default=False)
 parser.add_argument('--devices', type=str, default='0,1,2,3', help='device ids of multile gpus')
 parser.add_argument('--test_flop', action='store_true', default=False, help='See utils/tools for usage')
+
+# Optional exact-attention sampling for validating the rank power-law assumption.
+parser.add_argument('--powerlaw_output', type=str, default=None,
+                    help='save sampled exact cross-attention rows to this .npz file')
+parser.add_argument('--powerlaw_max_rows', type=int, default=5000,
+                    help='maximum captured rows per cross-attention module/key length')
+parser.add_argument('--powerlaw_rows_per_call', type=int, default=128,
+                    help='exact attention rows sampled from each module call')
+parser.add_argument('--powerlaw_module_pattern', type=str, default=None,
+                    help='regex selecting cross-attention module names to capture')
 
 
 #####
