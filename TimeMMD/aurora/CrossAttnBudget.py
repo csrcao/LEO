@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 #  restimate
 class PruneRatioEMA:
-    def __init__(self, beta=0.80, r_min=0.05, r_max=0.4, eps=1e-8):
+    def __init__(self, beta=0.8, r_min=0.05, r_max=0.4, eps=1e-8):
         self.beta = beta
         self.r_min = r_min
         self.r_max = r_max

@@ -238,7 +238,7 @@ def build_index_table(att_pre, K_sel, stage1_out, index_type, step):
     safe_row[:, 2] = rem_mean  # remaining_mean
     index_table = torch.cat([safe_row, index_table], dim=0)
     topk = att_pre.gather(1, sampled_idx.unsqueeze(-1).expand(-1, -1, K_sel))
-    faiss_index = build_faiss_index(topk.reshape(-1, K_sel), index=index_type, step=step)
+    faiss_index = build_faiss_index(topk.reshape(-1, K_sel), index_type=index_type, step=step)
 
     return index_table, faiss_index
 
@@ -319,7 +319,6 @@ class IndexManager:
     @torch.no_grad()
     def update(self, att_pre, K_sel, stage1):
         self.index_table, self.faiss_index = build_index_table(att_pre, K_sel, stage1_out=stage1, index_type=self.index_type, step=self.step)
-        self.step_counter += 1
 
 
 class TopRowSparseAttention(nn.Module):
@@ -328,7 +327,7 @@ class TopRowSparseAttention(nn.Module):
         factor=10,
         step=8,
         index_type='IVFFlat',
-        update_interval=30,
+        update_interval=200,
         budget_ctrl=None,
         tail_ratio=0.1,
         query_filter=True,
@@ -361,6 +360,8 @@ class TopRowSparseAttention(nn.Module):
 
         if self.index_mgr.need_update():
             self.index_mgr.update(att_pre, K_sel, stage1)
+        # Count every forward, including calls that reuse the cached index.
+        self.index_mgr.step_counter += 1
 
         # ---- attnapprox ----
         if index_use:
